@@ -230,7 +230,7 @@ public:
 	std::optional<NTSTATUS> pending_status{};
 
 	std::optional<emulator_allocator> gs_segment;
-	std::optional<emulator_object<TEB>> teb;
+	std::optional<emulator_object<TEB64>> teb;
 
 	std::vector<std::byte> last_registers{};
 
@@ -326,7 +326,7 @@ public:
 		buffer.read_optional(this->await_time);
 		buffer.read_optional(this->pending_status);
 		buffer.read_optional(this->gs_segment, [this] { return emulator_allocator(*this->emu_ptr); });
-		buffer.read_optional(this->teb, [this] { return emulator_object<TEB>(*this->emu_ptr); });
+		buffer.read_optional(this->teb, [this] { return emulator_object<TEB64>(*this->emu_ptr); });
 
 		buffer.read_vector(this->last_registers);
 	}
@@ -382,9 +382,9 @@ struct process_context
 
 	emulator_allocator base_allocator;
 
-	emulator_object<PEB> peb;
-	emulator_object<RTL_USER_PROCESS_PARAMETERS> process_params;
-	emulator_object<KUSER_SHARED_DATA> kusd;
+	emulator_object<PEB64> peb;
+	emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_params;
+	emulator_object<KUSER_SHARED_DATA64> kusd;
 
 	module_manager module_manager;
 
@@ -400,7 +400,7 @@ struct process_context
 
 	handle_store<handle_types::event, event> events{};
 	handle_store<handle_types::file, file> files{};
-	handle_store<handle_types::device, io_device_container> devices{};
+	handle_store<handle_types::device, io_device_container<EmulatorTraits<Emu64>>> devices{};
 	handle_store<handle_types::semaphore, semaphore> semaphores{};
 	handle_store<handle_types::port, port> ports{};
 	handle_store<handle_types::registry, registry_key, 2> registry_keys{};

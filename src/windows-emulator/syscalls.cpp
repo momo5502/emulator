@@ -5,7 +5,9 @@
 #include "syscall_utils.hpp"
 
 #include <numeric>
+#include <ranges>
 #include <cwctype>
+#include <algorithm>
 #include <utils/io.hpp>
 
 #include "utils/finally.hpp"
@@ -36,7 +38,7 @@ namespace
 			if (performance_frequency)
 			{
 				int64_t frequency{};
-				c.proc.kusd.access([&](const KUSER_SHARED_DATA& kusd)
+				c.proc.kusd.access([&](const KUSER_SHARED_DATA64& kusd)
 				{
 					frequency = kusd.QpcFrequency;
 				});
@@ -67,7 +69,7 @@ namespace
 
 	NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<handle> key_handle,
 	                          const ACCESS_MASK /*desired_access*/,
-	                          const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	                          const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
 	{
 		const auto attributes = object_attributes.read();
 		auto key = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
@@ -101,7 +103,7 @@ namespace
 
 	NTSTATUS handle_NtOpenKeyEx(const syscall_context& c, const emulator_object<handle> key_handle,
 	                            const ACCESS_MASK desired_access,
-	                            const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                            const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
 	                            ULONG /*open_options*/)
 	{
 		return handle_NtOpenKey(c, key_handle, desired_access, object_attributes);
@@ -319,12 +321,12 @@ namespace
 
 		if (info_class == ThreadNameInformation)
 		{
-			if (thread_information_length != sizeof(THREAD_NAME_INFORMATION))
+			if (thread_information_length != sizeof(THREAD_NAME_INFORMATION<EmulatorTraits<Emu64>>))
 			{
 				return STATUS_BUFFER_OVERFLOW;
 			}
 
-			const emulator_object<THREAD_NAME_INFORMATION> info{c.emu, thread_information};
+			const emulator_object<THREAD_NAME_INFORMATION<EmulatorTraits<Emu64>>> info{c.emu, thread_information};
 			const auto i = info.read();
 			thread->name = read_unicode_string(c.emu, i.ThreadName);
 
@@ -409,7 +411,7 @@ namespace
 
 	NTSTATUS handle_NtCreateEvent(const syscall_context& c, const emulator_object<handle> event_handle,
 	                              const ACCESS_MASK /*desired_access*/,
-	                              const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                              const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
 	                              const EVENT_TYPE event_type, const BOOLEAN initial_state)
 	{
 		std::u16string name{};
@@ -438,7 +440,7 @@ namespace
 
 	NTSTATUS handle_NtOpenEvent(const syscall_context& c, const emulator_object<uint64_t> event_handle,
 	                            const ACCESS_MASK /*desired_access*/,
-	                            const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	                            const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
 	{
 		const auto attributes = object_attributes.read();
 		const auto name = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
@@ -488,14 +490,14 @@ namespace
 
 	NTSTATUS handle_NtOpenSection(const syscall_context& c, const emulator_object<handle> section_handle,
 	                              const ACCESS_MASK /*desired_access*/,
-	                              const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	                              const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
 	{
 		const auto attributes = object_attributes.read();
 
 		auto filename = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 		c.win_emu.logger.print(color::gray, "Opening section: %S\n", filename.c_str());
 
-		if (filename == L"\\Windows\\SharedSection")
+		if (filename == u"\\Windows\\SharedSection")
 		{
 			section_handle.write(SHARED_SECTION);
 			return STATUS_SUCCESS;
@@ -525,9 +527,9 @@ namespace
 
 	NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, const handle section_handle,
 	                                   const handle process_handle, const emulator_object<uint64_t> base_address,
-	                                   const ULONG_PTR /*zero_bits*/, const SIZE_T /*commit_size*/,
+	                                   const EMULATOR_CAST(EmulatorTraits<Emu64>::ULONG_PTR, ULONG_PTR) /*zero_bits*/, const EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T) /*commit_size*/,
 	                                   const emulator_object<LARGE_INTEGER> /*section_offset*/,
-	                                   const emulator_object<SIZE_T> view_size,
+	                                   const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
 	                                   const SECTION_INHERIT /*inherit_disposition*/, const ULONG /*allocation_type*/,
 	                                   const ULONG /*win32_protect*/)
 	{
@@ -543,7 +545,7 @@ namespace
 			                      c.proc.shared_section_size, memory_permission::read_write);
 
 			size_t windows_dir_size{};
-			c.proc.kusd.access([&](const KUSER_SHARED_DATA& kusd)
+			c.proc.kusd.access([&](const KUSER_SHARED_DATA64& kusd)
 			{
 				const std::u16string_view windows_dir = kusd.NtSystemRoot.arr;
 				windows_dir_size = windows_dir.size() * 2;
@@ -557,7 +559,7 @@ namespace
 			const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> windir_obj{c.emu, obj_address};
 			windir_obj.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& ucs)
 			{
-				const auto dir_address = c.proc.kusd.value() + offsetof(KUSER_SHARED_DATA, NtSystemRoot);
+				const auto dir_address = c.proc.kusd.value() + offsetof(KUSER_SHARED_DATA64, NtSystemRoot);
 
 				ucs.Buffer = reinterpret_cast<unsigned long>(dir_address - obj_address);
 				ucs.Length = static_cast<uint16_t>(windows_dir_size);
@@ -607,7 +609,7 @@ namespace
 
 	NTSTATUS handle_NtCreateIoCompletion(const syscall_context& c, const emulator_object<handle> event_handle,
 	                                     const ACCESS_MASK desired_access,
-	                                     const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
 	                                     const uint32_t /*number_of_concurrent_threads*/)
 	{
 		return handle_NtCreateEvent(c, event_handle, desired_access, object_attributes, NotificationEvent, FALSE);
@@ -615,7 +617,7 @@ namespace
 
 	NTSTATUS handle_NtCreateWaitCompletionPacket(const syscall_context& c, const emulator_object<handle> event_handle,
 	                                             const ACCESS_MASK desired_access,
-	                                             const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	                                             const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
 	{
 		return handle_NtCreateEvent(c, event_handle, desired_access, object_attributes, NotificationEvent, FALSE);
 	}
@@ -640,17 +642,17 @@ namespace
 		{
 			if (return_length)
 			{
-				return_length.write(sizeof(MEMORY_BASIC_INFORMATION));
+				return_length.write(sizeof(MEMORY_BASIC_INFORMATION64));
 			}
 
-			if (memory_information_length != sizeof(MEMORY_BASIC_INFORMATION))
+			if (memory_information_length != sizeof(MEMORY_BASIC_INFORMATION64))
 			{
 				return STATUS_BUFFER_OVERFLOW;
 			}
 
-			const emulator_object<MEMORY_BASIC_INFORMATION> info{c.emu, memory_information};
+			const emulator_object<MEMORY_BASIC_INFORMATION64> info{c.emu, memory_information};
 
-			info.access([&](MEMORY_BASIC_INFORMATION& image_info)
+			info.access([&](MEMORY_BASIC_INFORMATION64& image_info)
 			{
 				const auto region_info = c.emu.get_region_info(base_address);
 
@@ -677,10 +679,10 @@ namespace
 		{
 			if (return_length)
 			{
-				return_length.write(sizeof(MEMORY_IMAGE_INFORMATION));
+				return_length.write(sizeof(MEMORY_IMAGE_INFORMATION64));
 			}
 
-			if (memory_information_length != sizeof(MEMORY_IMAGE_INFORMATION))
+			if (memory_information_length != sizeof(MEMORY_IMAGE_INFORMATION64))
 			{
 				return STATUS_BUFFER_OVERFLOW;
 			}
@@ -688,13 +690,13 @@ namespace
 			const auto mod = c.proc.module_manager.find_by_address(base_address);
 			if (!mod)
 			{
-				printf("Bad address for memory image request: 0x%llX\n", base_address);
+				printf("Bad address for memory image request: 0x%zX\n", base_address);
 				return STATUS_INVALID_ADDRESS;
 			}
 
-			const emulator_object<MEMORY_IMAGE_INFORMATION> info{c.emu, memory_information};
+			const emulator_object<MEMORY_IMAGE_INFORMATION64> info{c.emu, memory_information};
 
-			info.access([&](MEMORY_IMAGE_INFORMATION& image_info)
+			info.access([&](MEMORY_IMAGE_INFORMATION64& image_info)
 			{
 				image_info.ImageBase = reinterpret_cast<void*>(mod->image_base);
 				image_info.SizeOfImage = mod->size_of_image;
@@ -707,10 +709,10 @@ namespace
 		{
 			if (return_length)
 			{
-				return_length.write(sizeof(MEMORY_REGION_INFORMATION));
+				return_length.write(sizeof(MEMORY_REGION_INFORMATION64));
 			}
 
-			if (memory_information_length != sizeof(MEMORY_REGION_INFORMATION))
+			if (memory_information_length != sizeof(MEMORY_REGION_INFORMATION64))
 			{
 				return STATUS_BUFFER_OVERFLOW;
 			}
@@ -721,9 +723,9 @@ namespace
 				return STATUS_INVALID_ADDRESS;
 			}
 
-			const emulator_object<MEMORY_REGION_INFORMATION> info{c.emu, memory_information};
+			const emulator_object<MEMORY_REGION_INFORMATION64> info{c.emu, memory_information};
 
-			info.access([&](MEMORY_REGION_INFORMATION& image_info)
+			info.access([&](MEMORY_REGION_INFORMATION64& image_info)
 			{
 				memset(&image_info, 0, sizeof(image_info));
 
@@ -759,17 +761,17 @@ namespace
 		{
 			if (return_length)
 			{
-				return_length.write(sizeof(SYSTEM_TIMEOFDAY_INFORMATION));
+				return_length.write(sizeof(SYSTEM_TIMEOFDAY_INFORMATION64));
 			}
 
-			if (system_information_length != sizeof(SYSTEM_TIMEOFDAY_INFORMATION))
+			if (system_information_length != sizeof(SYSTEM_TIMEOFDAY_INFORMATION64))
 			{
 				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			const emulator_object<SYSTEM_TIMEOFDAY_INFORMATION> info_obj{c.emu, system_information};
+			const emulator_object<SYSTEM_TIMEOFDAY_INFORMATION64> info_obj{c.emu, system_information};
 
-			info_obj.access([&](SYSTEM_TIMEOFDAY_INFORMATION& info)
+			info_obj.access([&](SYSTEM_TIMEOFDAY_INFORMATION64& info)
 			{
 				info.BootTime.QuadPart = 0;
 				// TODO: Fill
@@ -782,17 +784,17 @@ namespace
 		{
 			if (return_length)
 			{
-				return_length.write(sizeof(SYSTEM_RANGE_START_INFORMATION));
+				return_length.write(sizeof(SYSTEM_RANGE_START_INFORMATION64));
 			}
 
-			if (system_information_length != sizeof(SYSTEM_RANGE_START_INFORMATION))
+			if (system_information_length != sizeof(SYSTEM_RANGE_START_INFORMATION64))
 			{
 				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			const emulator_object<SYSTEM_RANGE_START_INFORMATION> info_obj{c.emu, system_information};
+			const emulator_object<SYSTEM_RANGE_START_INFORMATION64> info_obj{c.emu, system_information};
 
-			info_obj.access([&](SYSTEM_RANGE_START_INFORMATION& info)
+			info_obj.access([&](SYSTEM_RANGE_START_INFORMATION64& info)
 			{
 				info.SystemRangeStart = 0xFFFF800000000000;
 			});
@@ -804,17 +806,17 @@ namespace
 		{
 			if (return_length)
 			{
-				return_length.write(sizeof(SYSTEM_PROCESSOR_INFORMATION));
+				return_length.write(sizeof(SYSTEM_PROCESSOR_INFORMATION64));
 			}
 
-			if (system_information_length != sizeof(SYSTEM_PROCESSOR_INFORMATION))
+			if (system_information_length != sizeof(SYSTEM_PROCESSOR_INFORMATION64))
 			{
 				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			const emulator_object<SYSTEM_PROCESSOR_INFORMATION> info_obj{c.emu, system_information};
+			const emulator_object<SYSTEM_PROCESSOR_INFORMATION64> info_obj{c.emu, system_information};
 
-			info_obj.access([&](SYSTEM_PROCESSOR_INFORMATION& info)
+			info_obj.access([&](SYSTEM_PROCESSOR_INFORMATION64& info)
 			{
 				memset(&info, 0, sizeof(info));
 				info.MaximumProcessors = 2;
@@ -828,17 +830,17 @@ namespace
 		{
 			if (return_length)
 			{
-				return_length.write(sizeof(SYSTEM_NUMA_INFORMATION));
+				return_length.write(sizeof(SYSTEM_NUMA_INFORMATION64));
 			}
 
-			if (system_information_length != sizeof(SYSTEM_NUMA_INFORMATION))
+			if (system_information_length != sizeof(SYSTEM_NUMA_INFORMATION64))
 			{
 				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			const emulator_object<SYSTEM_NUMA_INFORMATION> info_obj{c.emu, system_information};
+			const emulator_object<SYSTEM_NUMA_INFORMATION64> info_obj{c.emu, system_information};
 
-			info_obj.access([&](SYSTEM_NUMA_INFORMATION& info)
+			info_obj.access([&](SYSTEM_NUMA_INFORMATION64& info)
 			{
 				memset(&info, 0, sizeof(info));
 				info.ActiveProcessorsGroupAffinity->Mask = 0xFFF;
@@ -881,17 +883,17 @@ namespace
 
 		if (return_length)
 		{
-			return_length.write(sizeof(SYSTEM_BASIC_INFORMATION));
+			return_length.write(sizeof(SYSTEM_BASIC_INFORMATION64));
 		}
 
-		if (system_information_length != sizeof(SYSTEM_BASIC_INFORMATION))
+		if (system_information_length != sizeof(SYSTEM_BASIC_INFORMATION64))
 		{
 			return STATUS_BUFFER_TOO_SMALL;
 		}
 
-		const emulator_object<SYSTEM_BASIC_INFORMATION> info{c.emu, system_information};
+		const emulator_object<SYSTEM_BASIC_INFORMATION64> info{c.emu, system_information};
 
-		info.access([&](SYSTEM_BASIC_INFORMATION& basic_info)
+		info.access([&](SYSTEM_BASIC_INFORMATION64& basic_info)
 		{
 			basic_info.Reserved = 0;
 			basic_info.TimerResolution = 0x0002625a;
@@ -954,10 +956,15 @@ namespace
 
 			return_length.access([&](uint32_t& len)
 			{
+#ifdef OS_WINDOWS
 				code = NtQuerySystemInformationEx(static_cast<SYSTEM_INFORMATION_CLASS>(info_class), buffer,
 				                                  input_buffer_length,
 				                                  res_buff,
 				                                  system_information_length, reinterpret_cast<ULONG*>(&len));
+#else
+				// TODO: unsupported
+				code = STATUS_SUCCESS;
+#endif
 			});
 
 			if (code == 0)
@@ -980,17 +987,17 @@ namespace
 
 		if (return_length)
 		{
-			return_length.write(sizeof(SYSTEM_BASIC_INFORMATION));
+			return_length.write(sizeof(SYSTEM_BASIC_INFORMATION64));
 		}
 
-		if (system_information_length != sizeof(SYSTEM_BASIC_INFORMATION))
+		if (system_information_length != sizeof(SYSTEM_BASIC_INFORMATION64))
 		{
 			return STATUS_BUFFER_TOO_SMALL;
 		}
 
-		const emulator_object<SYSTEM_BASIC_INFORMATION> info{c.emu, system_information};
+		const emulator_object<SYSTEM_BASIC_INFORMATION64> info{c.emu, system_information};
 
-		info.access([&](SYSTEM_BASIC_INFORMATION& basic_info)
+		info.access([&](SYSTEM_BASIC_INFORMATION64& basic_info)
 		{
 			basic_info.Reserved = 0;
 			basic_info.TimerResolution = 0x0002625a;
@@ -1021,29 +1028,29 @@ namespace
 		{
 			if (return_length)
 			{
-				return_length.write(sizeof(SECTION_IMAGE_INFORMATION));
+				return_length.write(sizeof(SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>));
 			}
 
-			if (process_information_length != sizeof(SECTION_IMAGE_INFORMATION))
+			if (process_information_length != sizeof(SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>))
 			{
 				return STATUS_BUFFER_OVERFLOW;
 			}
 
-			const emulator_object<SECTION_IMAGE_INFORMATION> info{c.emu, process_information};
-			info.access([&](SECTION_IMAGE_INFORMATION& i)
+			const emulator_object<SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>> info{c.emu, process_information};
+			info.access([&](SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>& i)
 			{
 				const auto& mod = *c.proc.executable;
 
-				const emulator_object<IMAGE_DOS_HEADER> dos_header_obj{c.emu, mod.image_base};
+				const emulator_object<PEDosHeader_t> dos_header_obj{c.emu, mod.image_base};
 				const auto dos_header = dos_header_obj.read();
 
-				const emulator_object<IMAGE_NT_HEADERS> nt_headers_obj{c.emu, mod.image_base + dos_header.e_lfanew};
+				const emulator_object<PENTHeaders_t<uint64_t>> nt_headers_obj{c.emu, mod.image_base + dos_header.e_lfanew};
 				const auto nt_headers = nt_headers_obj.read();
 
 				const auto& file_header = nt_headers.FileHeader;
 				const auto& optional_header = nt_headers.OptionalHeader;
 
-				i.TransferAddress = nullptr;
+				i.TransferAddress = 0;
 				i.MaximumStackSize = optional_header.SizeOfStackReserve;
 				i.CommittedStackSize = optional_header.SizeOfStackCommit;
 				i.SubSystemType = optional_header.Subsystem;
@@ -1086,15 +1093,15 @@ namespace
 		{
 			if (return_length)
 			{
-				return_length.write(sizeof(DWORD_PTR));
+				return_length.write(sizeof(EmulatorTraits<Emu64>::PVOID));
 			}
 
-			if (process_information_length != sizeof(DWORD_PTR))
+			if (process_information_length != sizeof(EmulatorTraits<Emu64>::PVOID))
 			{
 				return STATUS_BUFFER_OVERFLOW;
 			}
 
-			const emulator_object<DWORD_PTR> info{c.emu, process_information};
+			const emulator_object<EmulatorTraits<Emu64>::PVOID> info{c.emu, process_information};
 			info.write(0);
 
 			return STATUS_SUCCESS;
@@ -1128,19 +1135,19 @@ namespace
 		{
 			if (return_length)
 			{
-				return_length.write(sizeof(PROCESS_BASIC_INFORMATION));
+				return_length.write(sizeof(PROCESS_BASIC_INFORMATION64));
 			}
 
-			if (process_information_length != sizeof(PROCESS_BASIC_INFORMATION))
+			if (process_information_length != sizeof(PROCESS_BASIC_INFORMATION64))
 			{
 				return STATUS_BUFFER_OVERFLOW;
 			}
 
-			const emulator_object<PROCESS_BASIC_INFORMATION> info{c.emu, process_information};
-			info.access([&](PROCESS_BASIC_INFORMATION& basic_info)
+			const emulator_object<PROCESS_BASIC_INFORMATION64> info{c.emu, process_information};
+			info.access([&](PROCESS_BASIC_INFORMATION64& basic_info)
 			{
 				basic_info.PebBaseAddress = c.proc.peb.ptr();
-				basic_info.UniqueProcessId = reinterpret_cast<HANDLE>(1);
+				basic_info.UniqueProcessId = 1;
 			});
 
 			return STATUS_SUCCESS;
@@ -1149,7 +1156,7 @@ namespace
 		if (info_class == ProcessImageFileNameWin32)
 		{
 			const auto peb = c.proc.peb.read();
-			emulator_object<RTL_USER_PROCESS_PARAMETERS> proc_params{c.emu, peb.ProcessParameters};
+			emulator_object<RTL_USER_PROCESS_PARAMETERS64> proc_params{c.emu, peb.ProcessParameters};
 			const auto params = proc_params.read();
 			const auto length = params.ImagePathName.Length + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>) + 2;
 
@@ -1163,10 +1170,10 @@ namespace
 				return STATUS_BUFFER_OVERFLOW;
 			}
 
-			const emulator_object<UNICODE_STRING> info{c.emu, process_information};
-			info.access([&](UNICODE_STRING& str)
+			const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> info{c.emu, process_information};
+			info.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str)
 			{
-				const auto buffer_start = static_cast<uint64_t>(process_information) + sizeof(UNICODE_STRING);
+				const auto buffer_start = static_cast<uint64_t>(process_information) + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>);
 				const auto string = read_unicode_string(c.emu, params.ImagePathName);
 				c.emu.write_memory(buffer_start, string.c_str(), (string.size() + 1) * 2);
 				str.Length = params.ImagePathName.Length;
@@ -1197,16 +1204,16 @@ namespace
 		{
 			if (return_length)
 			{
-				return_length.write(sizeof(THREAD_BASIC_INFORMATION));
+				return_length.write(sizeof(THREAD_BASIC_INFORMATION64));
 			}
 
-			if (thread_information_length != sizeof(THREAD_BASIC_INFORMATION))
+			if (thread_information_length != sizeof(THREAD_BASIC_INFORMATION64))
 			{
 				return STATUS_BUFFER_OVERFLOW;
 			}
 
-			const emulator_object<THREAD_BASIC_INFORMATION> info{c.emu, thread_information};
-			info.access([&](THREAD_BASIC_INFORMATION& i)
+			const emulator_object<THREAD_BASIC_INFORMATION64> info{c.emu, thread_information};
+			info.access([&](THREAD_BASIC_INFORMATION64& i)
 			{
 				i.TebBaseAddress = c.win_emu.current_thread().teb->ptr();
 				i.ClientId = c.win_emu.current_thread().teb->read().ClientId;
@@ -1240,7 +1247,7 @@ namespace
 	}
 
 	NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const handle file_handle,
-	                                     const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                                     const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
 	                                     const uint64_t file_information,
 	                                     const ULONG length, const FILE_INFORMATION_CLASS info_class)
 	{
@@ -1259,7 +1266,7 @@ namespace
 
 			if (io_status_block)
 			{
-				IO_STATUS_BLOCK block{};
+				IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
 				block.Information = sizeof(FILE_POSITION_INFORMATION);
 				io_status_block.write(block);
 			}
@@ -1287,7 +1294,7 @@ namespace
 	}
 
 	NTSTATUS handle_NtQueryInformationFile(const syscall_context& c, const handle file_handle,
-	                                       const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                                       const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
 	                                       const uint64_t file_information, const uint32_t length,
 	                                       const uint32_t info_class)
 	{
@@ -1301,7 +1308,7 @@ namespace
 		{
 			if (io_status_block)
 			{
-				IO_STATUS_BLOCK block{};
+				IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
 				block.Information = sizeof(FILE_STANDARD_INFORMATION);
 				io_status_block.write(block);
 			}
@@ -1334,7 +1341,7 @@ namespace
 
 			if (io_status_block)
 			{
-				IO_STATUS_BLOCK block{};
+				IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
 				block.Information = sizeof(FILE_POSITION_INFORMATION);
 				io_status_block.write(block);
 			}
@@ -1435,12 +1442,12 @@ namespace
 	NTSTATUS handle_NtOpenDirectoryObject(const syscall_context& c,
 	                                      const emulator_object<handle> directory_handle,
 	                                      const ACCESS_MASK /*desired_access*/,
-	                                      const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	                                      const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
 	{
 		const auto attributes = object_attributes.read();
 		const auto object_name = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 
-		if (object_name == L"\\KnownDlls")
+		if (object_name == u"\\KnownDlls")
 		{
 			directory_handle.write(KNOWN_DLLS_DIRECTORY);
 			return STATUS_SUCCESS;
@@ -1451,12 +1458,12 @@ namespace
 
 	NTSTATUS handle_NtOpenSymbolicLinkObject(const syscall_context& c, const emulator_object<handle> link_handle,
 	                                         ACCESS_MASK /*desired_access*/,
-	                                         const emulator_object<OBJECT_ATTRIBUTES> object_attributes)
+	                                         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
 	{
 		const auto attributes = object_attributes.read();
 		const auto object_name = read_unicode_string(c.emu, reinterpret_cast<UNICODE_STRING<EmulatorTraits<Emu64>>*>(attributes.ObjectName));
 
-		if (object_name == L"KnownDllPath")
+		if (object_name == u"KnownDllPath")
 		{
 			link_handle.write(KNOWN_DLLS_SYMLINK);
 			return STATUS_SUCCESS;
@@ -1465,8 +1472,9 @@ namespace
 		return STATUS_NOT_SUPPORTED;
 	}
 
+	// TODO: warning stdcall problem
 	NTSTATUS WINAPI handle_NtQuerySymbolicLinkObject(const syscall_context& c, const handle link_handle,
-	                                                 const emulator_object<UNICODE_STRING> link_target,
+	                                                 const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> link_target,
 	                                                 const emulator_object<ULONG> returned_length)
 	{
 		if (link_handle == KNOWN_DLLS_SYMLINK)
@@ -1586,7 +1594,7 @@ namespace
 
 	NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<handle> section_handle,
 	                                const ACCESS_MASK /*desired_access*/,
-	                                const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
+	                                const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
 	                                const emulator_object<ULARGE_INTEGER> maximum_size,
 	                                const ULONG /*section_page_protection*/, const ULONG /*allocation_attributes*/,
 	                                const handle /*file_handle*/)
@@ -1606,8 +1614,8 @@ namespace
 	NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<handle> client_port_handle,
 	                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
 	                              const emulator_object<SECURITY_QUALITY_OF_SERVICE> /*security_qos*/,
-	                              const emulator_object<PORT_VIEW> client_shared_memory,
-	                              const emulator_object<REMOTE_PORT_VIEW> /*server_shared_memory*/,
+	                              const emulator_object<PORT_VIEW64> client_shared_memory,
+	                              const emulator_object<REMOTE_PORT_VIEW64> /*server_shared_memory*/,
 	                              const emulator_object<ULONG> /*maximum_message_length*/,
 	                              const emulator_pointer connection_info,
 	                              const emulator_object<ULONG> connection_info_length)
@@ -1625,10 +1633,10 @@ namespace
 			c.emu.write_memory(connection_info, zero_mem.data(), zero_mem.size());
 		}
 
-		client_shared_memory.access([&](PORT_VIEW& view)
+		client_shared_memory.access([&](PORT_VIEW64& view)
 		{
 			p.view_base = c.emu.allocate_memory(view.ViewSize, memory_permission::read_write);
-			view.ViewBase = reinterpret_cast<void*>(p.view_base);
+			view.ViewBase = reinterpret_cast<unsigned long>(p.view_base);
 			view.ViewRemoteBase = view.ViewBase;
 		});
 
@@ -1667,7 +1675,7 @@ namespace
 	                                      const handle event,
 	                                      const emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine,
 	                                      const emulator_pointer apc_context,
-	                                      const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                                      const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
 	                                      const ULONG io_control_code,
 	                                      const emulator_pointer input_buffer,
 	                                      const ULONG input_buffer_length, const emulator_pointer output_buffer,
@@ -1679,7 +1687,7 @@ namespace
 			return STATUS_INVALID_HANDLE;
 		}
 
-		io_device_context context{c.emu};
+		io_device_context<EmulatorTraits<Emu64>> context{c.emu};
 		context.event = event;
 		context.apc_routine = apc_routine;
 		context.apc_context = apc_context;
@@ -1761,11 +1769,11 @@ namespace
 				return STATUS_BUFFER_TOO_SMALL;
 			}
 
-			TOKEN_USER user{};
+			TOKEN_USER64 user{};
 			user.User.Attributes = 0;
-			user.User.Sid = reinterpret_cast<void*>(token_information + 0x10);
+			user.User.Sid = reinterpret_cast<unsigned long>(token_information + 0x10);
 
-			emulator_object<TOKEN_USER>{c.emu, token_information}.write(user);
+			emulator_object<TOKEN_USER64>{c.emu, token_information}.write(user);
 			c.emu.write_memory(token_information + 0x10, sid, sizeof(sid));
 			return STATUS_SUCCESS;
 		}
@@ -1784,7 +1792,7 @@ namespace
 			return STATUS_SUCCESS;
 		}
 
-		printf("Unsupported token info class: %lX\n", token_information_class);
+		printf("Unsupported token info class: %X\n", token_information_class);
 		c.emu.stop();
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -1808,11 +1816,11 @@ namespace
 
 	NTSTATUS handle_NtGdiInit2(const syscall_context& c)
 	{
-		c.proc.peb.access([&](PEB& peb)
+		c.proc.peb.access([&](PEB64& peb)
 		{
 			if (!peb.GdiSharedHandleTable)
 			{
-				peb.GdiSharedHandleTable = c.proc.base_allocator.reserve<GDI_SHARED_MEMORY>().ptr();
+				peb.GdiSharedHandleTable =  reinterpret_cast<EmulatorTraits<Emu64>::PVOID*>(c.proc.base_allocator.reserve<GDI_SHARED_MEMORY64>().ptr());
 			}
 		});
 
@@ -1851,12 +1859,12 @@ namespace
 
 	NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const handle port_handle,
 	                                          const ULONG /*flags*/,
-	                                          const emulator_object<PORT_MESSAGE> /*send_message*/,
+	                                          const emulator_object<PORT_MESSAGE64> /*send_message*/,
 	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
 	                                          /*send_message_attributes*/
 	                                          ,
-	                                          const emulator_object<PORT_MESSAGE> receive_message,
-	                                          const emulator_object<SIZE_T> /*buffer_length*/,
+	                                          const emulator_object<PORT_MESSAGE64> receive_message,
+	                                          const emulator_object<EmulatorTraits<Emu64>::SIZE_T> /*buffer_length*/,
 	                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
 	                                          /*receive_message_attributes*/,
 	                                          const emulator_object<LARGE_INTEGER> /*timeout*/)
@@ -1873,7 +1881,7 @@ namespace
 			return STATUS_NOT_SUPPORTED;
 		}
 
-		const emulator_object<PORT_DATA_ENTRY> data{c.emu, receive_message.value() + 0x48};
+		const emulator_object<PORT_DATA_ENTRY<EmulatorTraits<Emu64>>> data{c.emu, receive_message.value() + 0x48};
 		const auto dest = data.read();
 		const auto base = reinterpret_cast<uint64_t>(dest.Base);
 
@@ -1903,7 +1911,7 @@ namespace
 		return STATUS_SUCCESS;
 	}
 
-	NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT> thread_context,
+	NTSTATUS handle_NtContinue(const syscall_context& c, const emulator_object<CONTEXT64> thread_context,
 	                           const BOOLEAN /*raise_alert*/)
 	{
 		c.write_status = false;
@@ -1943,7 +1951,7 @@ namespace
 	NTSTATUS handle_NtReadFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/,
 	                           const uint64_t /*apc_routine*/,
 	                           const uint64_t /*apc_context*/,
-	                           const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                           const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
 	                           uint64_t buffer, const ULONG length,
 	                           const emulator_object<LARGE_INTEGER> /*byte_offset*/,
 	                           const emulator_object<ULONG> /*key*/)
@@ -1961,7 +1969,7 @@ namespace
 
 		if (io_status_block)
 		{
-			IO_STATUS_BLOCK block{};
+			IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
 			block.Information = bytes_read;
 			io_status_block.write(block);
 		}
@@ -1973,7 +1981,7 @@ namespace
 	NTSTATUS handle_NtWriteFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/,
 	                            const uint64_t /*apc_routine*/,
 	                            const uint64_t /*apc_context*/,
-	                            const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                            const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
 	                            uint64_t buffer, const ULONG length,
 	                            const emulator_object<LARGE_INTEGER> /*byte_offset*/,
 	                            const emulator_object<ULONG> /*key*/)
@@ -1987,7 +1995,7 @@ namespace
 		{
 			if (io_status_block)
 			{
-				IO_STATUS_BLOCK block{};
+				IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
 				block.Information = length;
 				io_status_block.write(block);
 			}
@@ -2012,7 +2020,7 @@ namespace
 
 		if (io_status_block)
 		{
-			IO_STATUS_BLOCK block{};
+			IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
 			block.Information = bytes_written;
 			io_status_block.write(block);
 		}
@@ -2069,8 +2077,8 @@ namespace
 
 	NTSTATUS handle_NtCreateFile(const syscall_context& c, const emulator_object<handle> file_handle,
 	                             ACCESS_MASK desired_access,
-	                             const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
-	                             const emulator_object<IO_STATUS_BLOCK> /*io_status_block*/,
+	                             const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+	                             const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/,
 	                             const emulator_object<LARGE_INTEGER> /*allocation_size*/, ULONG /*file_attributes*/,
 	                             ULONG /*share_access*/, ULONG create_disposition, ULONG create_options,
 	                             uint64_t ea_buffer,
@@ -2093,7 +2101,7 @@ namespace
 			};
 
 			auto device_name = filename.substr(device_prefix.size());
-			io_device_container container{std::move(device_name), c.win_emu, data};
+			io_device_container<EmulatorTraits<Emu64>> container{std::move(device_name), c.win_emu, data};
 
 			const auto handle = c.proc.devices.store(std::move(container));
 			file_handle.write(handle);
@@ -2190,8 +2198,8 @@ namespace
 	NTSTATUS handle_NtOpenFile(const syscall_context& c,
 	                           const emulator_object<handle> file_handle,
 	                           const ACCESS_MASK desired_access,
-	                           const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
-	                           const emulator_object<IO_STATUS_BLOCK> io_status_block,
+	                           const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+	                           const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
 	                           const ULONG share_access,
 	                           const ULONG open_options)
 	{
@@ -2243,8 +2251,8 @@ namespace
 	}
 
 	NTSTATUS handle_NtRaiseException(const syscall_context& c,
-	                                 const emulator_object<EXCEPTION_RECORD> /*exception_record*/,
-	                                 const emulator_object<CONTEXT> thread_context, BOOLEAN handle_exception)
+	                                 const emulator_object<EXCEPTION_RECORD<EmulatorTraits<Emu64>>> /*exception_record*/,
+	                                 const emulator_object<CONTEXT64> thread_context, BOOLEAN handle_exception)
 	{
 		if (handle_exception)
 		{
@@ -2261,7 +2269,7 @@ namespace
 
 	NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, const emulator_object<handle> semaphore_handle,
 	                                  const ACCESS_MASK /*desired_access*/,
-	                                  const emulator_object<OBJECT_ATTRIBUTES> object_attributes,
+	                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
 	                                  const ULONG initial_count, const ULONG maximum_count)
 	{
 		semaphore s{};
@@ -2359,11 +2367,11 @@ namespace
 
 	NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<handle> thread_handle,
 	                                 const ACCESS_MASK /*desired_access*/,
-	                                 const emulator_object<OBJECT_ATTRIBUTES> /*object_attributes*/,
+	                                 const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
 	                                 const handle process_handle, const uint64_t start_routine,
-	                                 const uint64_t argument, const ULONG /*create_flags*/, const SIZE_T /*zero_bits*/,
-	                                 const SIZE_T stack_size, const SIZE_T /*maximum_stack_size*/,
-	                                 const emulator_object<PS_ATTRIBUTE_LIST> attribute_list)
+	                                 const uint64_t argument, const ULONG /*create_flags*/, const EmulatorTraits<Emu64>::SIZE_T /*zero_bits*/,
+	                                 const EmulatorTraits<Emu64>::SIZE_T stack_size, const EmulatorTraits<Emu64>::SIZE_T /*maximum_stack_size*/,
+	                                 const emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list)
 	{
 		if (process_handle != ~0ULL)
 		{
@@ -2380,19 +2388,19 @@ namespace
 
 		const auto* thread = c.proc.threads.get(h);
 
-		const emulator_object<PS_ATTRIBUTE> attributes{
-			c.emu, attribute_list.value() + offsetof(PS_ATTRIBUTE_LIST, Attributes)
+		const emulator_object<PS_ATTRIBUTE<EmulatorTraits<Emu64>>> attributes{
+			c.emu, attribute_list.value() + offsetof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>, Attributes)
 		};
 
 		const auto total_length = attribute_list.read().TotalLength;
 
-		constexpr auto entry_size = sizeof(PS_ATTRIBUTE);
-		constexpr auto header_size = sizeof(PS_ATTRIBUTE_LIST) - entry_size;
+		constexpr auto entry_size = sizeof(PS_ATTRIBUTE<EmulatorTraits<Emu64>>);
+		constexpr auto header_size = sizeof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>) - entry_size;
 		const auto attribute_count = (total_length - header_size) / entry_size;
 
 		for (size_t i = 0; i < attribute_count; ++i)
 		{
-			attributes.access([&](const PS_ATTRIBUTE& attribute)
+			attributes.access([&](const PS_ATTRIBUTE<EmulatorTraits<Emu64>>& attribute)
 			{
 				const auto type = attribute.Attribute & ~PS_ATTRIBUTE_THREAD;
 
@@ -2407,7 +2415,7 @@ namespace
 				}
 				else
 				{
-					printf("Unsupported thread attribute type: %llX\n", type);
+					printf("Unsupported thread attribute type: %zX\n", type);
 				}
 			}, i);
 		}
@@ -2501,7 +2509,7 @@ namespace
 	}
 
 	NTSTATUS handle_NtAlertThreadByThreadIdEx(const syscall_context& c, const uint64_t thread_id,
-	                                          const emulator_object<RTL_SRWLOCK> lock)
+	                                          const emulator_object<RTL_SRWLOCK<EmulatorTraits<Emu64>>> lock)
 	{
 		if (lock.value())
 		{

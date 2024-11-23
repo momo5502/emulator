@@ -10,17 +10,18 @@
 class windows_emulator;
 struct process_context;
 
+template <typename Traits>
 struct io_device_context
 {
-	handle event{};
-	emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine{};
-	emulator_pointer apc_context{};
-	emulator_object<IO_STATUS_BLOCK> io_status_block;
-	ULONG io_control_code{};
-	emulator_pointer input_buffer{};
-	ULONG input_buffer_length{};
-	emulator_pointer output_buffer{};
-	ULONG output_buffer_length{};
+	handle event;
+	typename Traits::PVOID /*PIO_APC_ROUTINE*/ apc_routine;
+	typename Traits::PVOID apc_context;
+	emulator_object<IO_STATUS_BLOCK<Traits>> io_status_block;
+	ULONG io_control_code;
+	typename Traits::PVOID input_buffer;
+	ULONG input_buffer_length;
+	typename Traits::PVOID output_buffer;
+	ULONG output_buffer_length;
 
 	io_device_context(x64_emulator& emu)
 		: io_status_block(emu)
@@ -65,17 +66,19 @@ struct io_device_creation_data
 	uint32_t length;
 };
 
-inline void write_io_status(const emulator_object<IO_STATUS_BLOCK> io_status_block, const NTSTATUS status)
+template <typename Traits>
+inline void write_io_status(const emulator_object<IO_STATUS_BLOCK<Traits>> io_status_block, const NTSTATUS status)
 {
 	if (io_status_block)
 	{
-		io_status_block.access([&](IO_STATUS_BLOCK& status_block)
+		io_status_block.access([&](IO_STATUS_BLOCK<Traits>& status_block)
 		{
 			status_block.Status = status;
 		});
 	}
 }
 
+template <typename Traits>
 struct io_device
 {
 	io_device() = default;
@@ -87,7 +90,7 @@ struct io_device
 	io_device(const io_device&) = delete;
 	io_device& operator=(const io_device&) = delete;
 
-	virtual NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) = 0;
+	virtual NTSTATUS io_control(windows_emulator& win_emu, const io_device_context<Traits>& context);
 
 	virtual void create(windows_emulator& win_emu, const io_device_creation_data& data)
 	{
@@ -103,7 +106,7 @@ struct io_device
 	virtual void serialize(utils::buffer_serializer& buffer) const = 0;
 	virtual void deserialize(utils::buffer_deserializer& buffer) = 0;
 
-	NTSTATUS execute_ioctl(windows_emulator& win_emu, const io_device_context& c)
+	NTSTATUS execute_ioctl(windows_emulator& win_emu, const io_device_context<Traits>& c)
 	{
 		if (c.io_status_block)
 		{
@@ -116,7 +119,8 @@ struct io_device
 	}
 };
 
-struct stateless_device : io_device
+template <typename Traits>
+struct stateless_device : io_device<Traits>
 {
 	void create(windows_emulator&, const io_device_creation_data&) final
 	{
@@ -131,21 +135,22 @@ struct stateless_device : io_device
 	}
 };
 
-std::unique_ptr<io_device> create_device(std::wstring_view device);
+std::unique_ptr<io_device<EmulatorTraits<Emu64>>> create_device64(const std::u16string_view device);
 
-class io_device_container : public io_device
+template <typename Traits>
+class io_device_container : public io_device<Traits>
 {
 public:
 	io_device_container() = default;
 
-	io_device_container(std::wstring device, windows_emulator& win_emu, const io_device_creation_data& data)
+	io_device_container(std::u16string device, windows_emulator& win_emu, const io_device_creation_data& data)
 		: device_name_(std::move(device))
 	{
 		this->setup();
 		this->device_->create(win_emu, data);
 	}
 
-	NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
+	NTSTATUS io_control(windows_emulator& win_emu, const io_device_context<Traits>& context) override
 	{
 		this->assert_validity();
 		return this->device_->io_control(win_emu, context);
@@ -172,8 +177,8 @@ public:
 		this->device_->deserialize(buffer);
 	}
 
-	template <typename T = io_device>
-		requires(std::is_base_of_v<io_device, T> || std::is_same_v<io_device, T>)
+	template <typename T = io_device<Traits>>
+		requires(std::is_base_of_v<io_device<Traits>, T> || std::is_same_v<io_device<Traits>, T>)
 	T* get_internal_device()
 	{
 		this->assert_validity();
@@ -182,12 +187,13 @@ public:
 	}
 
 private:
-	std::wstring device_name_{};
-	std::unique_ptr<io_device> device_{};
+	std::u16string device_name_{};
+	std::unique_ptr<io_device<Traits>> device_{};
 
 	void setup()
 	{
-		this->device_ = create_device(this->device_name_);
+		// TODO: this breaks abstraction
+		this->device_ = create_device64(this->device_name_);
 	}
 
 	void assert_validity() const
