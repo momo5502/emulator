@@ -14,7 +14,7 @@ struct emulator_settings
 	std::filesystem::path application{};
 	std::filesystem::path working_directory{};
 	std::filesystem::path registry_directory{"./registry"};
-	std::vector<std::wstring> arguments{};
+	std::vector<std::u16string> arguments{};
 	bool disable_logging{false};
 	bool use_relative_time{false};
 };
