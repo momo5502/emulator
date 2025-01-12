@@ -16,6 +16,7 @@ target_link_libraries(analyzer PRIVATE
   common
   reflect
   windows-emulator
+  gdb-stub
 )
 
 set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT analyzer)
