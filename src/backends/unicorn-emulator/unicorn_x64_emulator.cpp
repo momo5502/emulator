@@ -2,12 +2,13 @@
 #include "unicorn_x64_emulator.hpp"
 
 #include <array>
+#include <ranges>
+#include <optional>
 
 #include "unicorn_memory_regions.hpp"
 #include "unicorn_hook.hpp"
 
 #include "function_wrapper.hpp"
-#include <ranges>
 
 namespace unicorn
 {
@@ -223,8 +224,9 @@ namespace unicorn
 
             void start(const size_t count) override
             {
-                this->has_violation_ = false;
-                const auto start = this->read_instruction_pointer();
+                const auto start = this->violation_ip_.value_or(this->read_instruction_pointer());
+                this->violation_ip_ = std::nullopt;
+
                 constexpr auto end = std::numeric_limits<uint64_t>::max();
                 const auto res = uc_emu_start(*this, start, end, 0, count);
                 if (res == UC_ERR_OK)
@@ -240,7 +242,7 @@ namespace unicorn
                     res == UC_ERR_WRITE_PROT ||     //
                     res == UC_ERR_FETCH_PROT;
 
-                if (!is_violation || !this->has_violation_)
+                if (!is_violation || !this->has_violation())
                 {
                     uce(res);
                 }
@@ -385,14 +387,40 @@ namespace unicorn
 
             emulator_hook* hook_instruction(const int instruction_type, instruction_hook_callback callback) override
             {
-                function_wrapper<int, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) {
-                    return (c() == instruction_hook_continuation::skip_instruction) ? 1 : 0;
-                });
+                using wrapper_type = function_wrapper<int, uc_engine*>;
+
+                wrapper_type wrapper{};
+                const auto inst_type = static_cast<x64_hookable_instructions>(instruction_type);
+
+                if (inst_type == x64_hookable_instructions::invalid)
+                {
+                    wrapper = wrapper_type([this, c = std::move(callback)](uc_engine*) {
+                        const auto ip = this->read_instruction_pointer();
+                        const auto skip = c() == instruction_hook_continuation::skip_instruction;
+                        const auto new_ip = this->read_instruction_pointer();
+                        const auto has_ip_changed = ip != new_ip;
+
+                        if (skip && has_ip_changed)
+                        {
+                            this->violation_ip_ = new_ip;
+                        }
+                        else
+                        {
+                            this->violation_ip_ = std::nullopt;
+                        }
+
+                        return skip ? 1 : 0;
+                    });
+                }
+                else
+                {
+                    wrapper = wrapper_type([c = std::move(callback)](uc_engine*) {
+                        return (c() == instruction_hook_continuation::skip_instruction) ? 1 : 0;
+                    });
+                }
 
                 unicorn_hook hook{*this};
                 auto container = std::make_unique<hook_container>();
-
-                const auto inst_type = static_cast<x64_hookable_instructions>(instruction_type);
 
                 if (inst_type == x64_hookable_instructions::invalid)
                 {
@@ -495,14 +523,22 @@ namespace unicorn
                         const auto resume = c(address, static_cast<uint64_t>(size), operation, violation) ==
                                             memory_violation_continuation::resume;
 
-                        const auto has_ip_changed = ip != this->read_instruction_pointer();
+                        const auto new_ip = this->read_instruction_pointer();
+                        const auto has_ip_changed = ip != new_ip;
 
                         if (!resume)
                         {
                             return false;
                         }
 
-                        this->has_violation_ = resume && has_ip_changed;
+                        if (resume && has_ip_changed)
+                        {
+                            this->violation_ip_ = new_ip;
+                        }
+                        else
+                        {
+                            this->violation_ip_ = std::nullopt;
+                        }
 
                         if (has_ip_changed)
                         {
@@ -675,7 +711,7 @@ namespace unicorn
 
             bool has_violation() const override
             {
-                return this->has_violation_;
+                return this->violation_ip_.has_value();
             }
 
             std::string get_name() const override
@@ -686,7 +722,7 @@ namespace unicorn
           private:
             mutable bool has_snapshots_{false};
             uc_engine* uc_{};
-            bool has_violation_{false};
+            std::optional<uint64_t> violation_ip_{};
             std::vector<std::unique_ptr<hook_object>> hooks_{};
             std::unordered_map<uint64_t, mmio_callbacks> mmio_{};
         };

@@ -504,6 +504,8 @@ void windows_emulator::setup_hooks()
         this->log.print(color::gray, "Invalid instruction at: 0x%" PRIx64 " (via 0x%" PRIx64 ")\n", ip,
                         this->process.previous_ip);
 
+        // TODO: Unify icicle & unicorn handling
+        dispatch_illegal_instruction_violation(this->emu(), this->process);
         return instruction_hook_continuation::skip_instruction;
     });
 
